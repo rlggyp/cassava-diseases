@@ -32,3 +32,7 @@ sudo apt-get install -y \
 ```bash
 pip3 install tensorflow ultralytics
 ```
+## Usage
+```bash
+python3 main.py
+```

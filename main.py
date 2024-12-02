@@ -1,5 +1,7 @@
 import sys
 import cv2
+import os
+from datetime import datetime
 import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton, QLabel,
@@ -9,6 +11,15 @@ from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import QTimer
 import tensorflow.lite as tflite
 from ultralytics import YOLO
+
+saved_path = "output_images"
+
+def create_folder(folder_path):
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        print(f"Folder '{folder_path}' created.")
+    else:
+        print(f"Folder '{folder_path}' already exists.")
 
 class ImageInferencePage(QWidget):
     def __init__(self, tflite_model, yolo_model, labels, min_conf_threshold=0.1):
@@ -31,54 +42,117 @@ class ImageInferencePage(QWidget):
         # self.label = QLabel("Select an image to predict")
         # layout.addWidget(self.label)
 
-        self.image_label = QLabel()
-        self.image_label.setFixedSize(400, 400)
-        layout.addWidget(self.image_label)
-
         self.model_selector = QComboBox()
         self.model_selector.addItems(["SSD MobileNet", "YOLOv8"])
         self.model_selector.currentTextChanged.connect(self.change_model)
         layout.addWidget(self.model_selector)
 
+        self.image_label = QLabel()
+        self.image_label.setFixedSize(640, 480)
+        layout.addWidget(self.image_label)
+
         select_button = QPushButton("Select Image")
         select_button.clicked.connect(self.load_image)
-        layout.addWidget(select_button)
+
+        self.capture_button = QPushButton("Start Camera")
+        self.capture_button.clicked.connect(self.toggle_camera)
+
+        self.from_camera = False
+        self.camera_running = False
+        self.cap = None
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_frame)
+
+        h_layout = QHBoxLayout()
+        h_layout.addWidget(select_button)
+        h_layout.addWidget(self.capture_button)
+        layout.addLayout(h_layout)
 
         predict_button = QPushButton("Predict")
         predict_button.clicked.connect(self.predict_image)
         layout.addWidget(predict_button)
 
+        save_button = QPushButton("Save Image")
+        save_button.clicked.connect(self.save_image)
+        layout.addWidget(save_button)
+
         self.setLayout(layout)
 
         self.image_path = None
+        self.capture = None
+        self.image_result = None
 
     def change_model(self, model_name):
         self.current_model = "YOLO" if model_name == "YOLOv8" else "SSD"
+
+    def save_image(self):
+        if self.image_result is None:
+            return
+
+        datetime_now = datetime.now().strftime("_%Y-%m-%d-%H%M%S") 
+        save_path = os.path.join(saved_path, f'image{datetime_now}.jpg')
+        cv2.imwrite(save_path, self.image_result)
+
+    def toggle_camera(self):
+        if not self.camera_running:
+            self.cap = cv2.VideoCapture(0)
+            if not self.cap.isOpened():
+                print("Error: Failed to open camera.")
+                return
+
+            self.camera_running = True
+            self.from_camera = True
+            self.capture_button.setText('Stop Camera')
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.timer.start(30)  # Update frame every 30ms
+        else:
+            if self.cap:
+                self.cap.release()
+            self.camera_running = False
+            self.capture_button.setText('Start Camera')
+            self.timer.stop()
+
+    def update_frame(self):
+        ret, self.capture = self.cap.read()
+        self.display_image(self.capture)
 
     def load_image(self):
         options = QFileDialog.Options()
         self.image_path, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Image Files (*.png *.jpg *.bmp *.jpeg)", options=options)
         if self.image_path:
+            self.from_camera = False
             pixmap = QPixmap(self.image_path)
             self.image_label.setPixmap(pixmap.scaled(self.image_label.width(), self.image_label.height()))
 
     def predict_image(self):
-        if self.image_path:
+        if self.image_path or self.capture is not None:
             if self.current_model == "YOLO":
                 self.predict_with_yolo()
             else:
                 self.predict_with_ssd()
         else:
-            self.label.setText("No image selected!")
+            self.image_label.setText("No image selected or captured!")
 
     def predict_with_yolo(self):
-        image = cv2.imread(self.image_path)
+        image = None
+        if self.from_camera:
+            image = self.capture.copy()
+        else:
+            image = cv2.imread(self.image_path)
+
         results = self.yolo_model(image)
         image_with_boxes = results[0].plot()
+        self.image_result = image_with_boxes
         self.display_image(image_with_boxes)
 
     def predict_with_ssd(self):
-        image = cv2.imread(self.image_path)
+        image = None
+        if self.from_camera:
+            image = self.capture.copy()
+        else:
+            image = cv2.imread(self.image_path)
+
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         imH, imW, _ = image.shape
         image_resized = cv2.resize(image_rgb, (self.tflite_width, self.tflite_height))
@@ -108,6 +182,7 @@ class ImageInferencePage(QWidget):
                 label = f'{object_name}: {int(scores[i] * 100)}%'
                 cv2.putText(image, label, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
+        self.image_result = image
         self.display_image(image)
 
     def display_image(self, image):
@@ -136,22 +211,14 @@ class CameraInferencePage(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
 
-        self.camera_label = QLabel()
-        self.camera_label.setFixedSize(640, 480)
-        layout.addWidget(self.camera_label)
-
         self.model_selector = QComboBox()
         self.model_selector.addItems(["SSD MobileNet", "YOLOv8"])
         self.model_selector.currentTextChanged.connect(self.change_model)
         layout.addWidget(self.model_selector)
 
-        self.start_button = QPushButton("Start Camera")
-        self.start_button.clicked.connect(self.start_camera)
-        layout.addWidget(self.start_button)
-
-        self.stop_button = QPushButton("Stop Camera")
-        self.stop_button.clicked.connect(self.stop_camera)
-        layout.addWidget(self.stop_button)
+        self.camera_label = QLabel()
+        self.camera_label.setFixedSize(640, 480)
+        layout.addWidget(self.camera_label)
 
         self.setLayout(layout)
 
@@ -159,24 +226,32 @@ class CameraInferencePage(QWidget):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
 
+        self.camera_running = False
+        self.button = QPushButton("Start Camera")
+        self.button.clicked.connect(self.toggle_camera)
+        layout.addWidget(self.button)
+
+    def toggle_camera(self):
+        if not self.camera_running:
+            self.cap = cv2.VideoCapture(0)
+            if not self.cap.isOpened():
+                print("Error: Failed to open camera.")
+                return
+
+            self.camera_running = True
+            self.button.setText('Stop Camera')
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.timer.start(30)  # Update frame every 30ms
+        else:
+            if self.cap:
+                self.cap.release()
+            self.camera_running = False
+            self.button.setText('Start Camera')
+            self.timer.stop()
+
     def change_model(self, model_name):
         self.current_model = "YOLO" if model_name == "YOLOv8" else "SSD"
-
-    def start_camera(self):
-        self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
-            print("Error: Failed to open camera.")
-            return
-
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.timer.start(30)  # Update frame every 30ms
-
-    def stop_camera(self):
-        if self.cap:
-            self.cap.release()
-        self.timer.stop()
-        self.camera_label.clear()
 
     def update_frame(self):
         ret, frame = self.cap.read()
@@ -234,10 +309,13 @@ class MainWindow(QWidget):
         self.init_ui()
 
     def init_ui(self):
+        create_folder(saved_path)
+        self.setFixedSize(700, 700)
+
         self.tflite_model = tflite.Interpreter(model_path="model.tflite")
         self.tflite_model.allocate_tensors()
 
-        self.yolo_model = YOLO('yolov8s.pt')  # Load YOLO model (nano for lightweight)
+        self.yolo_model = YOLO('yolov8s.pt', verbose=False)  # Load YOLO model (nano for lightweight)
 
         self.radio_image = QRadioButton("Image Inference")
         self.radio_camera = QRadioButton("Camera Inference")
