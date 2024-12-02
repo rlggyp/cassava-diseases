@@ -14,6 +14,19 @@ from ultralytics import YOLO
 
 saved_path = "output_images"
 
+min_conf_threshold = 0.5
+yolo_model_filepath = "yolov8s.pt"
+tflite_model_filepath = "model.tflite"
+
+class_list = [ "CBB", "CBSD", "CGM", "CMD", "Healthy" ]
+class_colors = [
+    (0, 128, 255), # Blue - CBB
+    (0, 255, 128), # Green - CBSD
+    (255, 128, 0), # Orange - CGM
+    (128, 0, 255), # Purple - CMD
+    (255, 255, 0)  # Yellow - Healthy
+]
+
 def create_folder(folder_path):
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
@@ -22,7 +35,7 @@ def create_folder(folder_path):
         print(f"Folder '{folder_path}' already exists.")
 
 class ImageInferencePage(QWidget):
-    def __init__(self, tflite_model, yolo_model, labels, min_conf_threshold=0.1):
+    def __init__(self, tflite_model, yolo_model, labels, min_conf_threshold=0.5):
         super().__init__()
         self.tflite_model = tflite_model
         self.yolo_model = yolo_model
@@ -34,16 +47,13 @@ class ImageInferencePage(QWidget):
         self.tflite_width = input_details[0]['shape'][2]
 
         self.init_ui()
-        self.current_model = "SSD"  # Default model is SSD MobileNet
+        self.current_model = "SSD"
 
     def init_ui(self):
         layout = QVBoxLayout()
 
-        # self.label = QLabel("Select an image to predict")
-        # layout.addWidget(self.label)
-
         self.model_selector = QComboBox()
-        self.model_selector.addItems(["SSD MobileNet", "YOLOv8"])
+        self.model_selector.addItems(["SSD MobileNet", "YOLO"])
         self.model_selector.currentTextChanged.connect(self.change_model)
         layout.addWidget(self.model_selector)
 
@@ -83,7 +93,7 @@ class ImageInferencePage(QWidget):
         self.image_result = None
 
     def change_model(self, model_name):
-        self.current_model = "YOLO" if model_name == "YOLOv8" else "SSD"
+        self.current_model = "YOLO" if model_name == "YOLO" else "SSD"
 
     def save_image(self):
         if self.image_result is None:
@@ -105,7 +115,7 @@ class ImageInferencePage(QWidget):
             self.capture_button.setText('Stop Camera')
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            self.timer.start(30)  # Update frame every 30ms
+            self.timer.start(30) # Update frame every 30ms
         else:
             if self.cap:
                 self.cap.release()
@@ -122,8 +132,7 @@ class ImageInferencePage(QWidget):
         self.image_path, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Image Files (*.png *.jpg *.bmp *.jpeg)", options=options)
         if self.image_path:
             self.from_camera = False
-            pixmap = QPixmap(self.image_path)
-            self.image_label.setPixmap(pixmap.scaled(self.image_label.width(), self.image_label.height()))
+            self.display_image(cv2.imread(self.image_path))
 
     def predict_image(self):
         if self.image_path or self.capture is not None:
@@ -141,7 +150,7 @@ class ImageInferencePage(QWidget):
         else:
             image = cv2.imread(self.image_path)
 
-        results = self.yolo_model(image)
+        results = self.yolo_model.predict(image, conf=self.min_conf_threshold)
         image_with_boxes = results[0].plot()
         self.image_result = image_with_boxes
         self.display_image(image_with_boxes)
@@ -177,31 +186,75 @@ class ImageInferencePage(QWidget):
                 ymax = int(min(imH, boxes[i][2] * imH))
                 xmax = int(min(imW, boxes[i][3] * imW))
 
-                cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (10, 255, 0), 2)
-                object_name = self.labels[int(classes[i])]
-                label = f'{object_name}: {int(scores[i] * 100)}%'
-                cv2.putText(image, label, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+                
+                class_id = int(classes[i]) % len(class_colors)
+                color = class_colors[class_id]
+
+                
+                cv2.rectangle(image, (xmin, ymin), (xmax, ymax), color, 2)
+
+                
+                object_name = self.labels[class_id]
+                label = f'{object_name} {scores[i]:.2f}'
+
+                
+                text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                text_width, text_height = text_size
+
+                
+                label_x = xmin
+                label_y = ymin - text_height - 10
+                if label_y < 0:
+                    label_y = ymin + text_height + 10
+                if label_x + text_width + 10 > imW:
+                    label_x = imW - text_width - 10
+
+                cv2.rectangle(image, (label_x, label_y - text_height - 5), 
+                              (label_x + text_width + 10, label_y + 5), color, -1)
+
+                cv2.putText(image, label, (label_x + 5, label_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
         self.image_result = image
         self.display_image(image)
 
     def display_image(self, image):
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        scaled_image = cv2.resize(rgb_image, (self.image_label.width(), self.image_label.height()))
-        q_image = QImage(scaled_image.data, scaled_image.shape[1], scaled_image.shape[0],
-                         scaled_image.strides[0], QImage.Format_RGB888)
+        
+        label_width = self.image_label.width()
+        label_height = self.image_label.height()
+        label_aspect_ratio = label_width / label_height
+        
+        image_height, image_width, _ = rgb_image.shape
+        image_aspect_ratio = image_width / image_height
+        
+        if image_aspect_ratio > label_aspect_ratio:
+            new_width = label_width
+            new_height = int(label_width / image_aspect_ratio)
+        else:
+            new_height = label_height
+            new_width = int(label_height * image_aspect_ratio)
+        
+        resized_image = cv2.resize(rgb_image, (new_width, new_height))
+        
+        padded_image = 255 * np.ones((label_height, label_width, 3), dtype=np.uint8)
+        
+        y_offset = (label_height - new_height) // 2
+        x_offset = (label_width - new_width) // 2
+        padded_image[y_offset:y_offset + new_height, x_offset:x_offset + new_width] = resized_image
+        
+        q_image = QImage(padded_image.data, padded_image.shape[1], padded_image.shape[0],
+                         padded_image.strides[0], QImage.Format_RGB888)
         self.image_label.setPixmap(QPixmap.fromImage(q_image))
 
 class CameraInferencePage(QWidget):
-    def __init__(self, tflite_model, yolo_model, labels, min_conf_threshold=0.1):
+    def __init__(self, tflite_model, yolo_model, labels, min_conf_threshold=0.5):
         super().__init__()
         self.tflite_model = tflite_model
         self.yolo_model = yolo_model
         self.labels = labels
         self.min_conf_threshold = min_conf_threshold
-        self.current_model = "SSD"  # Default model is SSD MobileNet
+        self.current_model = "SSD"
 
-        # Get input details for SSD MobileNet
         input_details = self.tflite_model.get_input_details()
         self.tflite_height = int(input_details[0]['shape'][1])
         self.tflite_width = int(input_details[0]['shape'][2])
@@ -212,7 +265,7 @@ class CameraInferencePage(QWidget):
         layout = QVBoxLayout()
 
         self.model_selector = QComboBox()
-        self.model_selector.addItems(["SSD MobileNet", "YOLOv8"])
+        self.model_selector.addItems(["SSD MobileNet", "YOLO"])
         self.model_selector.currentTextChanged.connect(self.change_model)
         layout.addWidget(self.model_selector)
 
@@ -251,7 +304,7 @@ class CameraInferencePage(QWidget):
             self.timer.stop()
 
     def change_model(self, model_name):
-        self.current_model = "YOLO" if model_name == "YOLOv8" else "SSD"
+        self.current_model = "YOLO" if model_name == "YOLO" else "SSD"
 
     def update_frame(self):
         ret, frame = self.cap.read()
@@ -261,7 +314,6 @@ class CameraInferencePage(QWidget):
             else:
                 processed_frame = self.process_with_ssd(frame)
 
-            # Display the processed frame
             rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_frame.shape
             bytes_per_line = ch * w
@@ -269,7 +321,7 @@ class CameraInferencePage(QWidget):
             self.camera_label.setPixmap(QPixmap.fromImage(q_img))
 
     def process_with_yolo(self, frame):
-        results = self.yolo_model(frame)
+        results = self.yolo_model.predict(frame, conf=self.min_conf_threshold)
         return results[0].plot()
 
     def process_with_ssd(self, frame):
@@ -297,9 +349,28 @@ class CameraInferencePage(QWidget):
                 ymax = int(min(imH, boxes[i][2] * imH))
                 xmax = int(min(imW, boxes[i][3] * imW))
 
-                cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (10, 255, 0), 2)
-                label = f'{self.labels[int(classes[i])]}: {int(scores[i] * 100)}%'
-                cv2.putText(frame, label, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+                class_id = int(classes[i]) % len(class_colors)
+                color = class_colors[class_id]
+
+                cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), color, 2)
+
+                object_name = self.labels[class_id]
+                label = f'{object_name} {scores[i]:.2f}'
+
+                text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                text_width, text_height = text_size
+
+                label_x = xmin
+                label_y = ymin - text_height - 10
+                if label_y < 0:
+                    label_y = ymin + text_height + 10
+                if label_x + text_width + 10 > imW:
+                    label_x = imW - text_width - 10
+
+                cv2.rectangle(frame, (label_x, label_y - text_height - 5), 
+                              (label_x + text_width + 10, label_y + 5), color, -1)
+
+                cv2.putText(frame, label, (label_x + 5, label_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
         return frame
 
@@ -312,21 +383,20 @@ class MainWindow(QWidget):
         create_folder(saved_path)
         self.setFixedSize(700, 700)
 
-        self.tflite_model = tflite.Interpreter(model_path="model.tflite")
+        self.tflite_model = tflite.Interpreter(model_path=tflite_model_filepath)
         self.tflite_model.allocate_tensors()
 
-        self.yolo_model = YOLO('yolov8s.pt', verbose=False)  # Load YOLO model (nano for lightweight)
+        self.yolo_model = YOLO(yolo_model_filepath, verbose=False)
 
         self.radio_image = QRadioButton("Image Inference")
         self.radio_camera = QRadioButton("Camera Inference")
         self.radio_image.setChecked(True)
 
         self.radio_image.toggled.connect(self.toggle_page)
-
+        
         self.stack = QStackedWidget()
-        self.image_page = ImageInferencePage(self.tflite_model, self.yolo_model, '12345', 0.5)
-        # self.camera_page = QLabel("Camera inference not implemented yet.")  # Placeholder for camera inference
-        self.camera_page = CameraInferencePage(self.tflite_model, self.yolo_model, '12345', 0.5)
+        self.image_page = ImageInferencePage(self.tflite_model, self.yolo_model, class_list, min_conf_threshold)
+        self.camera_page = CameraInferencePage(self.tflite_model, self.yolo_model, class_list, min_conf_threshold)
 
         self.stack.addWidget(self.image_page)
         self.stack.addWidget(self.camera_page)
@@ -352,5 +422,3 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
-
-
