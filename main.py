@@ -12,12 +12,6 @@ from PyQt5.QtCore import QTimer
 import tensorflow.lite as tflite
 from ultralytics import YOLO
 
-saved_path = "output_images"
-
-min_conf_threshold = 0.5
-yolo_model_filepath = "yolov8s.pt"
-tflite_model_filepath = "model.tflite"
-
 class_list = [ "CBB", "CBSD", "CGM", "CMD", "Healthy" ]
 class_colors = [
     (0, 128, 255), # Blue - CBB
@@ -374,13 +368,66 @@ class CameraInferencePage(QWidget):
 
         return frame
 
+class EnvManager:
+    def __init__(self, env_file=".env"):
+        self.env_file = env_file
+        self.env_vars = {}
+        self.load_env()
+
+    def load_env(self):
+        """Load existing environment variables from .env file."""
+        if os.path.exists(self.env_file):
+            with open(self.env_file, "r") as file:
+                for line in file:
+                    if "=" in line:
+                        key, value = line.strip().split("=", 1)
+                        self.env_vars[key] = self.cast_value(value)
+
+    def cast_value(self, value):
+        """Cast the value to int, float, or keep as a string."""
+        try:
+            if "." in value:
+                return float(value)
+            else:
+                return int(value)
+        except ValueError:
+            return value
+
+    def set_env_var(self, key, value):
+        """Set or update an environment variable."""
+        if isinstance(value, (int, float)):
+            value = str(value)
+        if key in self.env_vars and str(self.env_vars[key]) == value:
+            print(f"No change for '{key}' (already set to '{value}')")
+            return
+        self.env_vars[key] = self.cast_value(value)
+        self.write_env()
+        print(f"Updated '{key}' to '{value}'")
+
+    def write_env(self):
+        """Write the current environment variables to the .env file."""
+        with open(self.env_file, "w") as file:
+            for key, value in self.env_vars.items():
+                file.write(f"{key}={value}\n")
+        print(f"Environment variables written to {self.env_file}")
+
+    def get_env_var(self, key):
+        """Get the value of an environment variable."""
+        return self.env_vars.get(key)
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.init_ui()
 
     def init_ui(self):
+        self.env_manager = EnvManager()
+        min_conf_threshold = self.env_manager.get_env_var('MIN_CONF_THRESHOLD')
+        yolo_model_filepath = self.env_manager.get_env_var('YOLO_MODEL_FILEPATH')
+        tflite_model_filepath = self.env_manager.get_env_var('TFLITE_MODEL_FILEPATH')
+        saved_path = self.env_manager.get_env_var('SAVED_PATH')
+
         create_folder(saved_path)
+
         self.setFixedSize(700, 700)
 
         self.tflite_model = tflite.Interpreter(model_path=tflite_model_filepath)
