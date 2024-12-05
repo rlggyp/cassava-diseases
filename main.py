@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import QTimer
-import tensorflow.lite as tflite
+from tflite_runtime.interpreter import Interpreter
 
 class_list = [ "CBB", "CBSD", "CGM", "CMD", "Healthy" ]
 class_colors = [
@@ -57,7 +57,7 @@ class ImageInferencePage(QWidget):
         layout.addWidget(self.model_selector)
 
         self.image_label = QLabel()
-        self.image_label.setFixedSize(640, 480)
+        # self.image_label.setFixedSize(640, 480)
         layout.addWidget(self.image_label)
 
         select_button = QPushButton("Select Image")
@@ -336,7 +336,7 @@ class CameraInferencePage(QWidget):
         layout.addWidget(self.model_selector)
 
         self.camera_label = QLabel()
-        self.camera_label.setFixedSize(640, 480)
+        # self.camera_label.setFixedSize(640, 480)
         layout.addWidget(self.camera_label)
 
         self.setLayout(layout)
@@ -380,11 +380,36 @@ class CameraInferencePage(QWidget):
             else:
                 processed_frame = self.process_with_ssd(frame)
 
-            rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb_frame.shape
-            bytes_per_line = ch * w
-            q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            self.camera_label.setPixmap(QPixmap.fromImage(q_img))
+            self.display_image(processed_frame)
+
+    def display_image(self, image):
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        label_width = self.camera_label.width()
+        label_height = self.camera_label.height()
+        label_aspect_ratio = label_width / label_height
+        
+        image_height, image_width, _ = rgb_image.shape
+        image_aspect_ratio = image_width / image_height
+        
+        if image_aspect_ratio > label_aspect_ratio:
+            new_width = label_width
+            new_height = int(label_width / image_aspect_ratio)
+        else:
+            new_height = label_height
+            new_width = int(label_height * image_aspect_ratio)
+        
+        resized_image = cv2.resize(rgb_image, (new_width, new_height))
+        
+        padded_image = 255 * np.ones((label_height, label_width, 3), dtype=np.uint8)
+        
+        y_offset = (label_height - new_height) // 2
+        x_offset = (label_width - new_width) // 2
+        padded_image[y_offset:y_offset + new_height, x_offset:x_offset + new_width] = resized_image
+        
+        q_image = QImage(padded_image.data, padded_image.shape[1], padded_image.shape[0],
+                         padded_image.strides[0], QImage.Format_RGB888)
+        self.camera_label.setPixmap(QPixmap.fromImage(q_image))
 
     def process_with_yolo(self, frame):
         original_image: np.ndarray = frame
@@ -568,9 +593,9 @@ class MainWindow(QWidget):
 
         create_folder(saved_path)
 
-        self.setFixedSize(700, 700)
+        # self.setFixedSize(700, 700)
 
-        self.tflite_model = tflite.Interpreter(model_path=tflite_model_filepath)
+        self.tflite_model = Interpreter(model_path=tflite_model_filepath)
         self.tflite_model.allocate_tensors()
 
         self.yolo_model: cv2.dnn.Net = cv2.dnn.readNetFromONNX(yolo_model_filepath)
