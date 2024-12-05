@@ -10,9 +10,14 @@ A Python-based desktop application for detecting cassava leaf diseases. Built wi
 Tested on Ubuntu `20.04`.
 
 ## Dependencies
+- opencv-python
 - PyQt5
-- TensorFlow
-- ultralytics
+- tflite-runtime
+
+## Screenshots
+<p align="center"> 
+  <img alt="screenshots" src="assets/screenshot.jpeg">
+</p>
 
 ## Installation
 ### Installing Ubuntu Packages
@@ -30,7 +35,7 @@ sudo apt-get install -y \
 ```
 ### Installing Python Packages
 ```bash
-pip3 install tensorflow ultralytics
+pip3 install tflite-runtime opencv-python PyQt5
 ```
 ## Usage
 ```bash
