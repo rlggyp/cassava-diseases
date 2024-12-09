@@ -50,3 +50,13 @@ docker run -it --name pyqt5-env -e DISPLAY -v $PWD:/workspace -v /tmp/.X11-unix:
 ```bash
 python3 main.py
 ```
+## Autostart
+enable and start cronjob
+```bash
+systemctl enable cron.service
+systemctl start cron.service
+```
+edit crontab by using `crontab -e` then filled it with this config below
+```cfg
+@reboot DISPLAY=:0 python3 /absolute_path/main.py 
+```
