@@ -19,7 +19,7 @@ Tested on Ubuntu `20.04`.
   <img alt="screenshots" src="assets/screenshot.jpeg">
 </p>
 
-## Installation
+## Installation in ubuntu 20
 ### Installing Ubuntu Packages
 ```bash
 sudo apt-get install -y \
@@ -36,6 +36,15 @@ sudo apt-get install -y \
 ### Installing Python Packages
 ```bash
 pip3 install tflite-runtime opencv-python PyQt5
+```
+## Installation using docker container
+### Build Docker Image
+```
+docker build -t pyqt5-env -f Dockerfile
+```
+### Create container
+```
+docker run -it --name pyqt5-env -e DISPLAY -v $PWD:/workspace -v /tmp/.X11-unix:/tmp/.X11-unix:rw -w /workspace pyqt5-env bash
 ```
 ## Usage
 ```bash
